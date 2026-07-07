@@ -15,6 +15,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
 
     testImplementation(kotlin("test"))
+    testImplementation(libs.bundles.test.suite)
+    testRuntimeOnly(libs.junit.jupiter.engine)
 }
 
 kotlin {

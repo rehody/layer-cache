@@ -7,14 +7,14 @@ import kotlinx.coroutines.coroutineScope
 import java.util.concurrent.ConcurrentHashMap
 
 abstract class TwoLayerCache<K : Any, V : Any>(
-    val l1: CacheStore<K, V>,
-    val l2: CacheStore<K, V>
+    private val l1: CacheStore<K, V>,
+    private val l2: CacheStore<K, V>
 ) {
     init {
         l2.subscribeInvalidation(l1::invalidate)
     }
 
-    private val deferredValues = ConcurrentHashMap<K, Deferred<V?>>()
+    private val valueRequests = ConcurrentHashMap<K, Deferred<V?>>()
 
     suspend fun getOrLoad(key: K, loader: suspend () -> V?): V? = coroutineScope {
 
@@ -33,7 +33,7 @@ abstract class TwoLayerCache<K : Any, V : Any>(
         }
 
         // read DB and refresh L1 and L2
-        val deferredDbValue = async(start = CoroutineStart.LAZY) {
+        val dbValueRequest = async(start = CoroutineStart.LAZY) {
             loader().also { dbValue ->
                 if (dbValue != null) {
                     put(key, dbValue)
@@ -43,13 +43,17 @@ abstract class TwoLayerCache<K : Any, V : Any>(
             }
         }
 
-        val actualDeferred = deferredValues.putIfAbsent(key, deferredDbValue) ?: deferredDbValue
+        val actualRequest = valueRequests.putIfAbsent(key, dbValueRequest) ?: dbValueRequest
+
+        if (actualRequest !== dbValueRequest) {
+            dbValueRequest.cancel()
+        }
 
         try {
-            actualDeferred.await()
+            actualRequest.await()
         } finally {
-            if (actualDeferred === deferredDbValue) {
-                deferredValues.remove(key, actualDeferred)
+            if (actualRequest === dbValueRequest) {
+                valueRequests.remove(key, actualRequest)
             }
         }
     }

@@ -1,6 +1,5 @@
 package io.github.rehody.layercache
 
-import java.util.Optional
 import java.util.function.Consumer
 
 interface CacheStore<K, V> {
