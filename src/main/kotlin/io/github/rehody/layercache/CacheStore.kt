@@ -5,7 +5,7 @@ import java.util.function.Consumer
 
 interface CacheStore<K, V> {
 
-    fun find(key: K): Optional<V>
+    fun find(key: K): V?
 
     fun isMissing(key: K): Boolean
 

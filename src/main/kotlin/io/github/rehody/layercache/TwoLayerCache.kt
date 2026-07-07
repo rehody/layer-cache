@@ -1,44 +1,57 @@
 package io.github.rehody.layercache
 
-import java.util.Optional
-import java.util.function.Supplier
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import java.util.concurrent.ConcurrentHashMap
 
 abstract class TwoLayerCache<K, V>(
     val l1: CacheStore<K, V>,
     val l2: CacheStore<K, V>
 ) {
-    fun getOrLoad(key: K, loader: Supplier<Optional<V>>): Optional<out V> {
+    init {
+        l2.subscribeInvalidation(l1::invalidate)
+    }
+
+    private val deferredValues = ConcurrentHashMap<K & Any, Deferred<V?>>()
+
+    suspend fun getOrLoad(key: K, loader: suspend () -> V?): V? = coroutineScope {
 
         // check L1
-        val l1Value = l1.find(key)
-        if (l1Value.isPresent) {
-            return l1Value
-        }
-        if (l1.isMissing(key)) {
-            return Optional.empty()
-        }
+        l1.find(key)?.let { return@coroutineScope it }
+        if (l1.isMissing(key)) return@coroutineScope null
 
         // check L2 and refresh L1 if found
-        val l2Value: Optional<V> = l2.find(key)
-        if (l2Value.isPresent) {
-            l1.put(key, l2Value.get())
-            return l2Value
+        l2.find(key)?.let {
+            l1.put(key, it)
+            return@coroutineScope it
         }
         if (l2.isMissing(key)) {
             l1.markMissing(key)
-            return Optional.empty()
+            return@coroutineScope null
         }
 
         // read DB and refresh L1 and L2
-        val dbValue: Optional<V> = loader.get()
-        if (dbValue.isPresent) {
-            val value: V = dbValue.get()
-            put(key, value)
-        } else {
-            markMissing(key)
+        val deferredDbValue = async(start = CoroutineStart.LAZY) {
+            loader().also { dbValue ->
+                if (dbValue != null) {
+                    put(key, dbValue)
+                } else {
+                    markMissing(key)
+                }
+            }
         }
 
-        return dbValue
+        val actualDeferred = deferredValues.putIfAbsent(key!!, deferredDbValue) ?: deferredDbValue
+
+        try {
+            actualDeferred.await()
+        } finally {
+            if (actualDeferred === deferredDbValue) {
+                deferredValues.remove(key, actualDeferred)
+            }
+        }
     }
 
     private fun put(key: K, value: V) {
@@ -52,7 +65,10 @@ abstract class TwoLayerCache<K, V>(
     }
 
     fun invalidate(key: K) {
-        l2.invalidate(key)
-        l1.invalidate(key)
+        try {
+            l2.invalidate(key)
+        } finally {
+            l1.invalidate(key)
+        }
     }
 }
