@@ -6,7 +6,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import java.util.concurrent.ConcurrentHashMap
 
-abstract class TwoLayerCache<K, V>(
+abstract class TwoLayerCache<K : Any, V : Any>(
     val l1: CacheStore<K, V>,
     val l2: CacheStore<K, V>
 ) {
@@ -14,7 +14,7 @@ abstract class TwoLayerCache<K, V>(
         l2.subscribeInvalidation(l1::invalidate)
     }
 
-    private val deferredValues = ConcurrentHashMap<K & Any, Deferred<V?>>()
+    private val deferredValues = ConcurrentHashMap<K, Deferred<V?>>()
 
     suspend fun getOrLoad(key: K, loader: suspend () -> V?): V? = coroutineScope {
 
@@ -43,7 +43,7 @@ abstract class TwoLayerCache<K, V>(
             }
         }
 
-        val actualDeferred = deferredValues.putIfAbsent(key!!, deferredDbValue) ?: deferredDbValue
+        val actualDeferred = deferredValues.putIfAbsent(key, deferredDbValue) ?: deferredDbValue
 
         try {
             actualDeferred.await()
